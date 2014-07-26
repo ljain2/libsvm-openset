@@ -139,7 +139,7 @@ int main(int argc, char **argv){
 	if (param.svm_type == ONE_VS_REST_WSVM){
         param_one_wsvm.svm_type = ONE_WSVM;
         param_one_wsvm.kernel_type = RBF;
-        param_one_wsvm.nu = 0.5;
+        param_one_wsvm.nu = param.nu;
         param_one_wsvm.cache_size = 100;
         param_one_wsvm.eps = 1e-3;
         param_one_wsvm.do_open = 1;
