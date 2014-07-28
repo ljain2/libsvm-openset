@@ -65,6 +65,8 @@ void exit_with_help(){
         "-N  we build models for negative classes (used for multiclass where labels might be negative.  default is only positive models \n"
         "-E  do exaustive search for best openset (otherwise do the default greedy optimization) \n"
 	"-q : quiet mode (no outputs)\n"
+    "-o cost : set the parameter C for CAP model in one-vs-rest WSVM \n"
+    "-a gamma : set gamma in kernel function for CAP model in one-vs-rest WSVM \n"        
 	);
 	exit(1);
 }
@@ -140,6 +142,8 @@ int main(int argc, char **argv){
         param_one_wsvm.svm_type = ONE_WSVM;
         param_one_wsvm.kernel_type = RBF;
         param_one_wsvm.nu = param.nu;
+        param_one_wsvm.C = param.cap_cost;
+        param_one_wsvm.gamma = param.cap_gamma;
         param_one_wsvm.cache_size = 100;
         param_one_wsvm.eps = 1e-3;
         param_one_wsvm.do_open = 1;
@@ -360,6 +364,12 @@ void parse_command_line(int argc, char **argv, char *input_file_name, char *mode
                             return;
                           }
                           break;
+            case 'o':
+				param.cap_cost = atof(argv[i]);
+				break;
+            case 'a':
+				param.cap_gamma = atof(argv[i]);
+				break;
 			default:
 				fprintf(stderr,"Unknown option: -%c\n", argv[i-1][1]);
 				exit_with_help();

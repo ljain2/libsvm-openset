@@ -169,7 +169,7 @@ void predict(FILE *input, FILE *output){
 				else
                     falsepos++;
 			}
-                        fprintf(output,"%g",predict_label);
+            fprintf(output,"%g: %g\n",predict_label,max_prob);
 			//cleanup scores and votes
 			for(int v=0; v<model->nr_class; v++)
                           if(scores[v] != NULL)

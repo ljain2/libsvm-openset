@@ -65,6 +65,8 @@ struct svm_parameter{
     double openset_min_probability; /* for WSVM openset, what is minimum probability to consider positive */
     FILE* vfile; /* for logging verbose stuff during debugging */
     int  rejectedID; /* id for rejected classes (-99999 is the default) */
+    double cap_cost;	/* for C_SVC, EPSILON_SVR and NU_SVR */
+    double cap_gamma;	/* for poly/rbf/sigmoid */
 };
 
 //
