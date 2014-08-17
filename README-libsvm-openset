@@ -1,10 +1,28 @@
-The libsvm-openset package extends libsvm to support openset recognition using the WSVM and 1-vs-set extension described in [1] and [2] respectively. libsvm-openset incoporates all libsvm functionality + WSVM described in [1] + 1-vs-set described in [2].
+The libsvm-openset package extends libsvm to support openset recognition using the PI-SVM, WSVM and 1-vs-set extension described in [1] [2] and [3] respectively. libsvm-openset incoporates all libsvm functionality PI-SVM described in [1] + WSVM described in [2] + 1-vs-set described in [3].
  
  
 This package an extension to the well known  libsvm package (see README for info on libsvm) and extends support for linear, poly, RBG and sigmod kernels (-t [0-3]). It should work  with customer kernels, we just did not test that).
+
+PI-SVM/PI-OSVM functionality described in [1] in libsvm-openset:
+The extension uses the same command-line processing with a few added  fields:
+In svm-train:
+    -s 9 for the PI-OSVM based on one-class svms
+    -s 10 for the PI-SVM based on 1-vs-rest binary svms
+In svm-predict:
+    -P specify thresholded probability value to reject sample as unknowns for WSVM (default 0.0)
  
+To use WSVM in libsvm-openset:
+************ Training
+./svm-train -s 9 -t 0 TrainingDataFile ModelFile
+./svm-train -s 10 -t 0 TrainingDataFile ModelFile
+        where TrainingDataFile is training file in libsvm format. "ModelFile" will be genrated using one-class svms for PI-OSVM (-s 9 option) and 1-vs-rest SVM binary svms for PI-SVM (-s 10 option) respectively. Both PI-SVM and PI-OSVM estimates probability of inclusion for the single class. 
+************ Predicing Using model files ("ModelFile")
+./svm-predict -P 0.1 TestDataFile ModelFile outputfile
+        where TestDataFile is testing file in libsvm format. ModelFile is file generated during training.
+        -P specify the threshold to consider for rejecting samples as unknown in PI-SVM and PI-OSVM.
+        
  
-WSVM functionality described in [1] in libsvm-openset:
+WSVM functionality described in [2] in libsvm-openset:
 The extension uses the same command-line processing with a few added  fields:
 In svm-train:
     -s 8 for the WSVM based on 1-vs-rest binary svms
@@ -23,7 +41,7 @@ To use WSVM in libsvm-openset:
         -C specify the minimum threshold to consider for any sample in CAP model.
  
 
-1-vs-set functionality described in [2] in libsvm-openset:
+1-vs-set functionality described in [3] in libsvm-openset:
 The extension uses the same command-line processing with a few added  fields:
 In svm-train:
     -s 7 for the  1-vs-set based on "1-vs-all" binary svms (which is the generally recommended model)
@@ -77,7 +95,8 @@ $> ./svm-predict
  
  
 References:
+[1] Lalit P. Jain, Walter J. Scheirer, Terrance E. Boult: Multi-Class Open Set Recognition Using Probability of Inclusion. European Conference on Computer Vision (ECCV 2014), September 2014, Zurich, Switzerland.
  
-[1] Walter J. Scheirer*, Lalit P. Jain*, Terrance E. Boult: Probability Models for Open Set Recognition. IEEE Trans. Pattern Anal. Mach. Intell. (2014)
+[2] Walter J. Scheirer*, Lalit P. Jain*, Terrance E. Boult: Probability Models for Open Set Recognition. IEEE Trans. Pattern Anal. Mach. Intell. (2014)
  
-[2] Walter J. Scheirer, Anderson de Rezende Rocha, Archana Sapkota, Terrance E. Boult: Toward Open Set Recognition. IEEE Trans. Pattern Anal. Mach. Intell. 35(7): 1757-1772 (2013)
+[3] Walter J. Scheirer, Anderson de Rezende Rocha, Archana Sapkota, Terrance E. Boult: Toward Open Set Recognition. IEEE Trans. Pattern Anal. Mach. Intell. 35(7): 1757-1772 (2013)

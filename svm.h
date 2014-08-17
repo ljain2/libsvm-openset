@@ -30,7 +30,7 @@ struct svm_problem{
 };
 
 
-  typedef enum { C_SVC, NU_SVC, ONE_CLASS, EPSILON_SVR, NU_SVR, OPENSET_OC, OPENSET_PAIR, OPENSET_BIN, ONE_VS_REST_WSVM, ONE_WSVM} svm_type_t;	/* svm_type */
+  typedef enum { C_SVC, NU_SVC, ONE_CLASS, EPSILON_SVR, NU_SVR, OPENSET_OC, OPENSET_PAIR, OPENSET_BIN, ONE_VS_REST_WSVM, ONE_WSVM, PI_SVM} svm_type_t;	/* svm_type */
   typedef enum { LINEAR, POLY, RBF, SIGMOID, PRECOMPUTED } kernel_t; /* kernel_type */
 
   typedef enum {OPT_PRECISION, OPT_RECALL,  OPT_FMEASURE,  OPT_HINGE, OPT_BALANCEDRISK}  openset_optimization_t;

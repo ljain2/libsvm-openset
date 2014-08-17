@@ -178,6 +178,46 @@ void predict(FILE *input, FILE *output){
 			if(votes != NULL)
                           free(votes);             
 		}
+        else if(svm_type == ONE_WSVM || svm_type == PI_SVM){
+            int *votes = NULL;
+			double **scores = Malloc(double *, nr_class+1);
+            votes = Malloc(int,nr_class+1);
+			for(int v=0; v<nr_class; v++){
+				scores[v] = Malloc(double, nr_class);
+                memset(scores[v],0,nr_class*sizeof(double));
+			}
+			predict_label = svm_predict_extended(model,x, scores, votes);
+            double max_prob=scores[0][0];
+            for(int jj=0; jj< model->openset_dim; jj++){
+                if(scores[jj][0] > max_prob){
+                    max_prob = scores[jj][0];
+                }
+            }
+            bool known_class=false;
+            for(int jj=0; jj< model->openset_dim; jj++){
+                if(target_label == model->label[jj])
+                    known_class=true;
+            }
+            if(known_class){
+                if( (target_label == predict_label) && (max_prob > model->param.openset_min_probability) )
+                    truepos++;
+                else
+                    falseneg++;
+            }
+            else{
+                if(max_prob < model->param.openset_min_probability)
+                    trueneg++;
+                else
+                    falsepos++;
+            }
+            fprintf(output,"%g",predict_label);
+            //cleanup scores and votes
+            for(int v=0; v<model->nr_class; v++)
+                if(scores[v] != NULL)
+                    free(scores[v]);
+            if(votes != NULL)
+                free(votes);
+        }
 		else  if (svm_type == OPENSET_PAIR){
 			int *votes = NULL;
 			double **scores = Malloc(double *, nr_class+1);
@@ -396,7 +436,7 @@ void predict(FILE *input, FILE *output){
     }
 	else{
         //open-set
-		if(svm_type==ONE_VS_REST_WSVM){
+		if(svm_type==ONE_VS_REST_WSVM || svm_type == ONE_WSVM || PI_SVM){
             double rec_acc = (double)((double)(truepos+trueneg))/((double)(truepos+trueneg+falsepos+falseneg));
             printf("Recognition Accuracy = %g%%\n",(rec_acc*100));
             double precision=0;
@@ -560,7 +600,7 @@ int main(int argc, char **argv)
 
     }
     model->param.openset_min_probability = openset_min_probability;
-    if(model && (model->param.svm_type == OPENSET_OC || model->param.svm_type == OPENSET_BIN || model->param.svm_type == OPENSET_PAIR ||model->param.svm_type == ONE_VS_REST_WSVM ||model->param.svm_type == ONE_WSVM))
+    if(model && (model->param.svm_type == OPENSET_OC || model->param.svm_type == OPENSET_BIN || model->param.svm_type == OPENSET_PAIR ||model->param.svm_type == ONE_VS_REST_WSVM ||model->param.svm_type == ONE_WSVM || model->param.svm_type == PI_SVM))
 		open_set=true;
 
 	x = (struct svm_node *) malloc(max_nr_attr*sizeof(struct svm_node));

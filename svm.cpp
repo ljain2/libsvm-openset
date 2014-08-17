@@ -1576,6 +1576,7 @@ static decision_function svm_train_one(
 	{
 		case C_SVC:
 		case ONE_VS_REST_WSVM:
+        case PI_SVM:
 		case OPENSET_BIN:
 			solve_c_svc(prob,param,alpha,&si,Cp,Cn);
 			break;
@@ -2434,7 +2435,7 @@ svm_model *svm_train_wsvm_onevset_oneclass(svm_model* model, const svm_problem *
           sub_prob.y[k] = -1;
         }
 
-      fprintf(stderr,"Building one-class CAP model for WSVM with %d pos for class %d\n",pcnt,label[i]);
+      fprintf(stderr,"Building one-class model with %d pos for class %d\n",pcnt,label[i]);
       tmodels[i] = svm_train_oneclass_or_regression(tmodels[i],&sub_prob,param);
       model->rho[i] = tmodels[i]->rho[0];
 
@@ -2947,6 +2948,213 @@ svm_model *svm_train_onevset_binary(svm_model* model, const svm_problem *prob, c
   return model;
 }
 
+svm_model *svm_train_pi_svm_onevset_binary(svm_model* model, const svm_problem *prob, const svm_parameter *param){
+    
+    int nr_class,i;
+    int *label = NULL;
+    int *start = NULL;
+    int *count = NULL;
+    int l = prob->l;
+    int *perm = Malloc(int,l);
+    // group training data of the same class
+    svm_group_classes(prob,&nr_class,&label,&start,&count,perm);
+    /* save a copy of orginal data */
+    svm_node **x = Malloc(svm_node *,l);
+    for(i=0;i<l;i++){
+        x[i] = prob->x[perm[i]];
+    }
+    model->nr_class = nr_class;
+    /* we make an array of temp models to use during fitting, then we merge into one multi-class model */
+    struct svm_model  **tmodels;
+    tmodels = Malloc(svm_model*,nr_class+1);
+    struct svm_parameter tparam;
+    memcpy(&tparam,param,sizeof(tparam));
+    tparam.svm_type = C_SVC;
+    tparam.do_open=1;
+    int keep_cnt=0;
+    for(i=0;i<nr_class;i++){
+        if(((model->param.neg_labels == false && label[i] < 0))) {
+            tmodels[i] =  NULL;
+        } else {
+            keep_cnt++;
+            tmodels[i] =  Malloc(svm_model,1);
+            memset(tmodels[i],0,sizeof(struct svm_model));
+            tmodels[i]->openset_dim = 1;
+            tmodels[i]->rho =   tmodels[i]->alpha =   tmodels[i]->omega = 0;
+            tmodels[i]->label=0;
+            tmodels[i]->param = tparam;
+            tmodels[i]->free_sv = 0;	// we will allocate space, so mark it to be cleaned up
+        }
+    }
+    model->param.svm_type=PI_SVM;
+    /* setup model for multiple openset classes */
+    model->openset_dim = keep_cnt;
+    model->MRpos_one_vs_all = new MetaRecognition[model->openset_dim];
+    model->rho = Malloc(double,model->openset_dim);
+    model->label = Malloc(int,nr_class);
+    /* loop over our classes, pull out data, make a model,, train on it, then openset analysze it. */
+    int weibull_model_count=0;
+    for(i=0;i<nr_class;i++)
+    {
+        model->label[i] = label[i];
+        if(tmodels[i] == NULL) continue;
+        svm_problem sub_prob;
+        sub_prob.nr_classes=2;
+        int si = start[i];
+        int ci = count[i];
+        sub_prob.l = prob->l;
+        sub_prob.x = Malloc(svm_node *,sub_prob.l);
+        sub_prob.y = Malloc(double,sub_prob.l);
+        int k;
+        int plabel = label[i];
+        int nlabel = -label[i];
+        if(plabel==nlabel) nlabel-=1;
+        int pcnt=0;
+        int ncnt=0;
+        /* positive class is the first label see, so order it so all positves are at front */
+        for(k=0;k<ci; k++)
+        {
+            sub_prob.x[k] = x[si+k];
+            sub_prob.y[k] = plabel;
+            pcnt++;
+        }
+        for(k=0;k<si;k++)
+        {
+            sub_prob.x[ci+k] = x[k];
+            sub_prob.y[ci+k] = nlabel;
+            ncnt++;
+        }
+        for(k=ci+si;k<sub_prob.l;k++)
+        {
+            sub_prob.x[k] = x[k];
+            sub_prob.y[k] = nlabel;
+            ncnt++;
+        }
+        if(model->param.vfile)
+            fprintf(model->param.vfile,"Trainingg binary 1-vs-set for class %d with %d pos and %d neg examples\n",plabel,pcnt,ncnt);
+        fprintf(stderr,"Training binary 1-vs-set for class %d with %d pos and %d neg examples\n",plabel,pcnt,ncnt);
+        tmodels[i] = svm_train_binary_pairs(tmodels[i],&sub_prob,param);
+        model->rho[i] = tmodels[i]->rho[0];
+        /* now analyze subproblem for openset adjustments, saving resulting alpha and omega  */
+        int top_score_pos = (int)(1.5 * tmodels[i]->nSV[0]) ;
+        if( (top_score_pos >= pcnt) || (top_score_pos <= 3) )
+            top_score_pos = tmodels[i]->nSV[0];
+        int top_score_neg = (int) ((1.5 * tmodels[i]->nSV[1])/(nr_class-1) ) ;
+        if( (top_score_neg >= ncnt) )
+            top_score_neg = tmodels[i]->nSV[1]/ (nr_class-1);
+        if( (top_score_neg <= 3) )
+            top_score_neg = tmodels[i]->nSV[1];
+        svm_node_libsvm *sub_nd = Malloc(svm_node_libsvm ,sub_prob.l);
+        double *dec_values = (double*)malloc( (tmodels[i]->nr_class*(tmodels[i]->nr_class-1)/2) * sizeof (double));//memory creating for storing n*(n-1)/2 pairwise decision scores in one-dimensional array
+        for(int q=0;q<sub_prob.l;q++)
+        {
+            sub_nd[q].index = sub_prob.y[q];
+            svm_predict_values(tmodels[i],sub_prob.x[q],dec_values);
+            sub_nd[q].value = dec_values[0];
+        }
+        int rvalue = model->MRpos_one_vs_all[weibull_model_count].FitSVM(sub_nd, sub_prob.l, plabel, true, MetaRecognition::positive_model,top_score_pos );//positive tail w.r.t. positive class
+        if(rvalue!=1)
+            printf("fit weibull positive %d\n",rvalue);
+        //model->MRpos_one_vs_all[weibull_model_count].FitSVM(sub_nd, sub_prob.l, plabel, true, MetaRecognition::positive_model,top_score_pos );//positive tail w.r.t. positive class
+        if(0) fprintf(stderr,"%lf %lf %lf %lf %lf %lf\n",
+                      model->MRpos_one_vs_all[weibull_model_count].W_score(2.0),
+                      model->MRpos_one_vs_all[weibull_model_count].W_score(1),
+                      model->MRpos_one_vs_all[weibull_model_count].W_score(.1),
+                      model->MRpos_one_vs_all[weibull_model_count].W_score(-.1),
+                      model->MRpos_one_vs_all[weibull_model_count].W_score(-1),
+                      model->MRpos_one_vs_all[weibull_model_count].W_score(-2));
+        
+        weibull_model_count++;
+        free(sub_prob.x);
+        free(sub_prob.y);
+    }
+    if(param->probability){
+        info("Probability not yet supported for openset");
+        //put prob code hwere when it is
+    }
+    else
+    {
+        model->probA=NULL;
+        model->probB=NULL;
+    }
+    /* now we allocate overall SV for the set, and copy data back into the multi-class model */
+    int total_sv = 0;
+    keep_cnt=0;
+    for(i=0;i<nr_class;i++) {
+        if(tmodels[i])  {
+            total_sv +=  tmodels[i]->l;
+            model->rho[keep_cnt] = model->rho[i];
+            keep_cnt++;
+        } else {
+            //      model->label[nr_class-(i-keep_cnt)-1] = model->label[i];// collect negative labels at the end.. there are no models
+        }
+    }
+    info("Total nSV = %d\n",total_sv);
+    model->openset_dim = keep_cnt;
+    model->l = total_sv;
+    int svcnt = 0; /* where are we on overall SV count */
+    if(keep_cnt == nr_class){
+        model->nSV = Malloc(int ,model->nr_class+1);
+        model->SV = Malloc(svm_node *,total_sv);
+        model->sv_coef = Malloc(double *,(model->nr_class+1));
+        for(i=0;i<nr_class;i++){
+            if(tmodels[i]) {
+                model->nSV[i] = (int)tmodels[i]->l;
+                model->sv_coef[i] = Malloc(double,total_sv);
+                memset(model->sv_coef[i],0,total_sv*sizeof(double));
+                for(int k=0;k<model->nSV[i];k++,svcnt++){
+                    model->SV[svcnt] = tmodels[i]->SV[k];
+                    model->sv_coef[i][svcnt] = tmodels[i]->sv_coef[0][k];
+                }
+            }
+        }
+        
+        for(i=0;i<nr_class;i++){
+            if(tmodels[i]) {
+                svm_free_model_content(tmodels[i]);
+                free(tmodels[i]);
+            }
+        }
+        
+    } else {
+        /* if we have negative labesl to be ignored, we need to save the models a little differnt */
+        if(!(keep_cnt == 1 && nr_class==2)){
+            fprintf(stderr,"Openset ignoring  negative classess currently only supported for binary.. did you forget the -B flag?\n"
+                    "This may not  build a valid model and will leak memory");
+        }
+        
+        int keepit=0;
+        if(tmodels[1]) { 
+            keepit=1;
+        }
+        model->rho[0] = tmodels[keepit]->rho[0];
+        model->SV = tmodels[keepit]->SV;
+        model->nSV = tmodels[keepit]->nSV;
+        model->sv_coef =   tmodels[keepit]->sv_coef;
+        
+        for(i=0;i<nr_class;i++){
+            if(tmodels[i]) {
+                //      svm_free_model_content(tmodels[i]);// we reused some of the content, don't free them all,do only those we don't need
+                free(tmodels[i]->label);
+                free(tmodels[i]->rho);
+                free(tmodels[i]);
+            }
+        }
+    }
+    
+    model->free_sv=0;
+    
+    free(tmodels);
+    
+    free(x);
+    free(label);
+    free(start);
+    free(count);
+    free(perm);
+    
+    return model;
+}
+
 svm_model *svm_train_onevset_pairs(svm_model* model, const svm_problem *prob, const svm_parameter *param){
 
   /* mod the tyep so it thinks it's a regular pairwise svm */ 
@@ -3015,6 +3223,10 @@ svm_model *svm_train(const svm_problem *prob, const svm_parameter *param)
 	else if(param->svm_type == ONE_WSVM){
             svm_train_wsvm_onevset_oneclass(model,prob,param);
           }
+    else if(param->svm_type == PI_SVM)
+    {
+        svm_train_pi_svm_onevset_binary(model,prob,param);
+    }
 	else  {
             svm_train_binary_pairs(model,prob,param);
           }
@@ -3399,6 +3611,32 @@ double svm_predict_values_extended(const svm_model *model, const svm_node *x,
 	   }
 	  return model->label[max_prob_index];
     }
+    else if(model->param.svm_type == PI_SVM ){
+        for(int j=0;j<model->openset_dim;j++){
+            double *sv_coef = model->sv_coef[j];
+            double rho = model->rho[j];
+            double sum = 0;
+            for(int i=0;i<model->l;i++){
+                if(sv_coef[i] != 0)
+                    sum += sv_coef[i] * Kernel::k_function(x,model->SV[i],model->param);
+            }
+            double dist = sum - rho;
+            dec_values[j] = dist;
+            double pos_class_pos_score = model->MRpos_one_vs_all[j].W_score(dec_values[j]);//positive tail w.r.t. positive class
+            double tscore = pos_class_pos_score;
+            if(scores){
+                scores[j][0] =  tscore;
+            }
+        }
+        double max_prob=scores[0][0];int max_prob_index=0;
+        for(int jj=0; jj< model->openset_dim; jj++){
+            if(scores[jj][0] > max_prob){
+                max_prob = scores[jj][0];
+                max_prob_index = jj;
+            }
+        }
+        return model->label[max_prob_index];
+    }
 	else  if(model->param.svm_type == OPENSET_PAIR ){
         int i;
         int nr_class = model->nr_class;
@@ -3479,9 +3717,6 @@ double svm_predict_values_extended(const svm_model *model, const svm_node *x,
                 maxdist = dist;
                 bestindex=j;
                 }
-
-
-
                 /* only the winner gets a vote, and even then only if the scores are positive */
                 if(scores[i][j] > dist) {
                     dist = scores[i][j];
@@ -3683,7 +3918,8 @@ double svm_predict_extended(const svm_model *model, const svm_node *x,
           dec_values = Malloc(double, 1);
 	else if(model->param.svm_type == OPENSET_BIN ||
             model->param.svm_type == ONE_WSVM ||
-            model->param.svm_type == ONE_VS_REST_WSVM)
+            model->param.svm_type == ONE_VS_REST_WSVM ||
+            model->param.svm_type == PI_SVM)
         dec_values = Malloc(double, nr_class+1);
     else
           dec_values = Malloc(double, (nr_class*(nr_class-1)/2));
@@ -3748,7 +3984,7 @@ double svm_predict_probability(
 }
 
 static const char *svm_type_table[] ={
-  "c_svc","nu_svc","one_class","epsilon_svr","nu_svr","openset_oc", "openset_pair", "openset_bin", "one_vs_rest_wsvm", "one_wsvm",NULL
+  "c_svc","nu_svc","one_class","epsilon_svr","nu_svr","openset_oc", "openset_pair", "openset_bin", "one_vs_rest_wsvm", "one_wsvm","pi_svm",NULL
 };
 
 static const char *kernel_type_table[]={
@@ -3798,7 +4034,8 @@ int svm_save_model(const char *model_file_name, const svm_model *model){
             || param.svm_type == ONE_WSVM	
              || param.svm_type == OPENSET_BIN 
              || param.svm_type == OPENSET_PAIR
-             || param.svm_type == ONE_VS_REST_WSVM){
+             || param.svm_type == ONE_VS_REST_WSVM
+             || param.svm_type == PI_SVM){
           if(param.neg_labels)
             fprintf(fp, "Neg_labels 1\n");
           else 
@@ -3833,6 +4070,11 @@ int svm_save_model(const char *model_file_name, const svm_model *model){
           for(int i=0; i< model->openset_dim; i++) model->MRpos_one_class[i].Save(fp);
 
         }
+        //for PI_SVM
+        if ((param.svm_type == PI_SVM && ( (model->MRpos_one_vs_all != NULL) ) )){
+            fprintf(fp,"MR_pos_one_vs_all ");
+            for(int i=0; i< model->openset_dim; i++) model->MRpos_one_vs_all[i].Save(fp);
+    }
     // regression has probA only
 	if(model->probA){
 		fprintf(fp, "probA");
@@ -3859,7 +4101,7 @@ int svm_save_model(const char *model_file_name, const svm_model *model){
 	const svm_node * const *SV = model->SV;
 
         int limit = nr_class-1;
-        if(model->param.svm_type == OPENSET_OC || model->param.svm_type == ONE_WSVM|| model->param.svm_type == OPENSET_BIN || model->param.svm_type == ONE_VS_REST_WSVM)
+        if(model->param.svm_type == OPENSET_OC || model->param.svm_type == ONE_WSVM|| model->param.svm_type == OPENSET_BIN || model->param.svm_type == ONE_VS_REST_WSVM || model->param.svm_type == PI_SVM)
           limit = model->openset_dim;
 	for(int i=0;i<l;i++){
 		for(int j=0;j<limit;j++)
@@ -4021,7 +4263,7 @@ svm_model *svm_load_model(const char *model_file_name)
 		//for ONE_VS_REST_WSVM POSITIVE
 		else if(strcmp(cmd,"MR_pos_one_vs_all")==0){
             int n=model->openset_dim;
-            if(n>0 && ( (param.svm_type == ONE_VS_REST_WSVM) ) ){
+            if(n>0 && ( (param.svm_type == ONE_VS_REST_WSVM) || (param.svm_type == PI_SVM) ) ){
                 model->MRpos_one_vs_all = new MetaRecognition[model->openset_dim];
                 for(int i=0;i<n;i++) {
                     model->MRpos_one_vs_all[i].Load(fp);
@@ -4122,7 +4364,7 @@ svm_model *svm_load_model(const char *model_file_name)
 	fseek(fp,pos,SEEK_SET);
 
 	int m = model->nr_class - 1;
-        if(param.svm_type == OPENSET_OC ||param.svm_type == ONE_WSVM || param.svm_type == OPENSET_BIN || param.svm_type == ONE_VS_REST_WSVM) m++;
+        if(param.svm_type == OPENSET_OC ||param.svm_type == ONE_WSVM || param.svm_type == OPENSET_BIN || param.svm_type == ONE_VS_REST_WSVM || param.svm_type == PI_SVM) m++;
 	int l = model->l;
 	model->sv_coef = Malloc(double *,m);
 	int i;
@@ -4172,7 +4414,7 @@ void svm_free_model_content(svm_model* model_ptr)
 		free((void *)(model_ptr->SV[0]));
 	if(model_ptr->sv_coef){
           int limit=model_ptr->nr_class-1;
-          if(model_ptr->param.svm_type == OPENSET_OC ||model_ptr->param.svm_type == ONE_WSVM || model_ptr->param.svm_type == OPENSET_BIN || model_ptr->param.svm_type == ONE_VS_REST_WSVM) 
+          if(model_ptr->param.svm_type == OPENSET_OC ||model_ptr->param.svm_type == ONE_WSVM || model_ptr->param.svm_type == OPENSET_BIN || model_ptr->param.svm_type == ONE_VS_REST_WSVM || model_ptr->param.svm_type == PI_SVM)
             limit = model_ptr->openset_dim;
 	  if(model_ptr->param.svm_type == C_SVC)
 		limit = model_ptr->nr_class-1;	
@@ -4224,7 +4466,8 @@ const char *svm_check_parameter(const svm_problem *prob, const svm_parameter *pa
 	   svm_type != OPENSET_PAIR &&
 	   svm_type != OPENSET_BIN &&
 	   svm_type != ONE_VS_REST_WSVM &&
-	   svm_type != ONE_WSVM &&		
+	   svm_type != ONE_WSVM &&
+       svm_type != PI_SVM &&
 	   svm_type != EPSILON_SVR &&
 	   svm_type != NU_SVR)
 		return "unknown svm type";        
@@ -4255,7 +4498,8 @@ const char *svm_check_parameter(const svm_problem *prob, const svm_parameter *pa
 
 	if(svm_type == C_SVC ||
 	   svm_type == OPENSET_BIN ||
-	   svm_type == ONE_VS_REST_WSVM ||	
+	   svm_type == ONE_VS_REST_WSVM ||
+       svm_type == PI_SVM ||
 	   svm_type == EPSILON_SVR ||
 	   svm_type == NU_SVR)
 		if(param->C <= 0)
