@@ -1,5 +1,5 @@
 #LIBMR_DIR should be absolute path, not relative (no ..)                                                                                                          
-LIBMR_DIR = /Users/username/libsvm-openset/libMR
+LIBMR_DIR = /Users/macuser/lalitphd/WSVM/libsvm-openset/libMR
 
 ifeq ($(OS),Windows_NT)
     CFLAGS += -D WIN32
@@ -30,7 +30,7 @@ LIBMR_LIB = $(LIBMR_DIR)/libMR/build/libMR/libMR$(LIBSUFFIX)
 #LIBMR_LIB = build/libMR/libMR.so
 
 CFLAGS += -Wall  -g   -I $(LIBMR_DIR)/libMR 
-CFLGAS += -O2 -fPIC
+CFLAGS += -O2 -fPIC
 SHVER = 2
 
 all: svm-train svm-predict svm-scale $(LIBMR_LIB)
