@@ -3245,7 +3245,7 @@ void svm_cross_validation(const svm_problem *prob, const svm_parameter *param, i
 	// stratified cv may not give leave-one-out rate
 	// Each class to l folds -> some folds may have zero elements
 	if((param->svm_type == C_SVC ||
-	    param->svm_type == NU_SVC) && nr_fold < l){
+	    param->svm_type == NU_SVC || param->svm_type == ONE_WSVM || param->svm_type == PI_SVM) && nr_fold < l){
 		int *start = NULL;
 		int *label = NULL;
 		int *count = NULL;
@@ -3320,7 +3320,10 @@ void svm_cross_validation(const svm_problem *prob, const svm_parameter *param, i
 			++k;
 		}
 		struct svm_model *submodel = svm_train(&subprob,param);
-		if(param->probability && 
+        if(param->svm_type == ONE_WSVM || param->svm_type == PI_SVM)
+            submodel->param.openset_min_probability = param->openset_min_probability;
+		
+        if(param->probability &&
 		   (param->svm_type == C_SVC || param->svm_type == NU_SVC)){
 			double *prob_estimates=Malloc(double,svm_get_nr_class(submodel));
 			for(j=begin;j<end;j++)
@@ -3332,6 +3335,36 @@ void svm_cross_validation(const svm_problem *prob, const svm_parameter *param, i
 			for(j=begin;j<end;j++)
                           target[perm[j]] = (svm_predict(submodel,prob->x[perm[j]])>0)?1:-1;;
 		}
+        else if(param->svm_type == ONE_WSVM || param->svm_type == PI_SVM){
+            for(j=begin;j<end;j++){
+                int *votes = NULL;
+                double **scores = Malloc(double *, nr_class+1);
+                votes = Malloc(int,nr_class+1);
+                for(int v=0; v<nr_class; v++){
+                    scores[v] = Malloc(double, nr_class);
+                    memset(scores[v],0,nr_class*sizeof(double));
+                }
+                for(int ii=0;ii<nr_class;ii++){
+                    votes[ii]=0;
+                    for(int jj=0; jj<nr_class; jj++){
+                        scores[ii][jj] = 0;
+                    }
+                }
+                target[perm[j]] = svm_predict_extended(submodel,prob->x[perm[j]], scores, votes);
+                //target[perm[j]] = svm_predict_extended(submodel,prob->x[perm[j]],scores,votes);
+                //printf("%lf  %lf\n",prob->y[perm[j]],target[perm[j]]);
+                //cleanup scores and votes
+                for(int v=0; v<nr_class; v++)
+                    if(scores[v] != NULL)
+                        free(scores[v]);
+                if(scores != NULL)
+                    free(scores);
+                if(votes != NULL)
+                    free(votes);
+                
+            }
+            
+        }
 		else
 			for(j=begin;j<end;j++)
 				target[perm[j]] = svm_predict(submodel,prob->x[perm[j]]);
@@ -3343,13 +3376,14 @@ void svm_cross_validation(const svm_problem *prob, const svm_parameter *param, i
 	free(perm);	
 }
 
-void svm_cross_validation_wsvm(const svm_problem *prob, const svm_parameter *param, int nr_fold, double *target)
+void svm_cross_validation_wsvm(const svm_problem *prob, const svm_parameter *param, const svm_problem *prob_one_wsvm, const svm_parameter *param_one_wsvm ,int nr_fold, double *target)
 {
 	int i;
 	int *fold_start = Malloc(int,nr_fold+1);
 	int l = prob->l;
 	int *perm = Malloc(int,l);
 	int nr_class;
+    //int *label = NULL;
 	if(param->svm_type == ONE_VS_REST_WSVM && nr_fold < l){
         int *start = NULL;
 		int *label = NULL;
@@ -3387,7 +3421,7 @@ void svm_cross_validation_wsvm(const svm_problem *prob, const svm_parameter *par
 		fold_start[0]=0;
 		for (i=1;i<=nr_fold;i++)
 			fold_start[i] = fold_start[i-1]+fold_count[i-1];
-		free(start);	
+		free(start);
 		free(label);
 		free(count);	
 		free(index);
@@ -3402,29 +3436,47 @@ void svm_cross_validation_wsvm(const svm_problem *prob, const svm_parameter *par
 		for(i=0;i<=nr_fold;i++)
 			fold_start[i]=i*l/nr_fold;
 	}
-
+    
+    int falsepos=0, falseneg=0, truepos=0, trueneg=0;
+    int total;
 	for(i=0;i<nr_fold;i++){
 		int begin = fold_start[i];
 		int end = fold_start[i+1];
 		int j,k;
 		struct svm_problem subprob;
-
 		subprob.l = l-(end-begin);
 		subprob.x = Malloc(struct svm_node*,subprob.l);
 		subprob.y = Malloc(double,subprob.l);
+        
+        struct svm_problem subprob_one_wsvm;
+		subprob_one_wsvm.l = l-(end-begin);
+		subprob_one_wsvm.x = Malloc(struct svm_node*,subprob_one_wsvm.l);
+		subprob_one_wsvm.y = Malloc(double,subprob_one_wsvm.l);
 			
 		k=0;
 		for(j=0;j<begin;j++){
 			subprob.x[k] = prob->x[perm[j]];
 			subprob.y[k] = prob->y[perm[j]];
+            
+            subprob_one_wsvm.x[k] = prob_one_wsvm->x[perm[j]];
+			subprob_one_wsvm.y[k] = prob_one_wsvm->y[perm[j]];
+            
 			++k;
 		}
 		for(j=end;j<l;j++){
 			subprob.x[k] = prob->x[perm[j]];
 			subprob.y[k] = prob->y[perm[j]];
+            
+            subprob_one_wsvm.x[k] = prob_one_wsvm->x[perm[j]];
+			subprob_one_wsvm.y[k] = prob_one_wsvm->y[perm[j]];
 			++k;
 		}
 		struct svm_model *submodel = svm_train(&subprob,param);
+        struct svm_model *submodel_one_wsvm = svm_train(&subprob_one_wsvm,param_one_wsvm);
+
+        submodel->param.openset_min_probability = param->openset_min_probability;
+        submodel_one_wsvm->param.openset_min_probability = param_one_wsvm->openset_min_probability;
+        
 		for(j=begin;j<end;j++){
 			int *votes = NULL;
 			double **scores = Malloc(double *, nr_class+1);
@@ -3439,22 +3491,17 @@ void svm_cross_validation_wsvm(const svm_problem *prob, const svm_parameter *par
 					scores[ii][jj] = 0;					
 				}
 			}
-			target[perm[j]] = svm_predict_extended(submodel,prob->x[perm[j]],scores,votes);
-			//printf("%lf  %lf\n",prob->y[perm[j]],target[perm[j]]);
-			//cleanup scores and votes
-			for(int v=0; v<nr_class; v++)
-        	        	if(scores[v] != NULL)
-        	                    free(scores[v]);
-			if(scores != NULL)
-        	        	free(scores);
-			if(votes != NULL)
-        	                free(votes);
-
+            target[perm[j]] = svm_predict_extended_plus_one_wsvm(submodel,submodel_one_wsvm,prob->x[perm[j]], scores, votes);
 		}
+        svm_free_and_destroy_model(&submodel_one_wsvm);
 		svm_free_and_destroy_model(&submodel);
+        free(subprob_one_wsvm.x);
+		free(subprob_one_wsvm.y);
 		free(subprob.x);
 		free(subprob.y);
-	}		
+	}
+    
+    //free(label);
 	free(fold_start);
 	free(perm);	
 }

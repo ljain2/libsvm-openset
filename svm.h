@@ -63,6 +63,7 @@ struct svm_parameter{
     double beta; /* for use in f-measure optimization */
     double near_preasure, far_preasure; /* for openset risk preasures */
     double openset_min_probability; /* for WSVM openset, what is minimum probability to consider positive */
+    double openset_min_probability_one_wsvm; /* for WSVM openset, what is minimum probability to consider positive for one class wsvm */
     FILE* vfile; /* for logging verbose stuff during debugging */
     int  rejectedID; /* id for rejected classes (-99999 is the default) */
     double cap_cost;	/* for C_SVC, EPSILON_SVR and NU_SVR */
@@ -100,7 +101,7 @@ struct svm_model{
 
 struct svm_model *svm_train(const struct svm_problem *prob, const struct svm_parameter *param);
 void svm_cross_validation(const struct svm_problem *prob, const struct svm_parameter *param, int nr_fold, double *target);
-void svm_cross_validation_wsvm(const struct svm_problem *prob, const struct svm_parameter *param, int nr_fold, double *target);
+void svm_cross_validation_wsvm(const struct svm_problem *prob, const struct svm_parameter *param,const struct svm_problem *prob_one_wsvm, const struct svm_parameter *param_one_wsvm, int nr_fold, double *target);
 
 int svm_save_model(const char *model_file_name, const struct svm_model *model);
 struct svm_model *svm_load_model(const char *model_file_name);

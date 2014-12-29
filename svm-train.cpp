@@ -61,6 +61,8 @@ void exit_with_help(){
 	"-b probability_estimates : whether to train a SVC or SVR model for probability estimates, 0 or 1 (default 0)\n"
 	"-wi weight : set the parameter C of class i to weight*C, for C-SVC (default 1)\n"
 	"-v n: n-fold cross validation mode\n"
+    "-P threshold probability value to reject sample as unknowns for WSVM/One-class PI-OSVM (default 0.0) (only for cross validation)\n"
+    "-C threshold probability value to reject sample as unknowns for CAP model in WSVM(default 0.0) (only for cross validation)\n"
         "-B beta   will set the beta for fmeasure used in openset training, default =1\n"
         "-V filename   will log data about the opeset optimization process to filename\n"
         "-G nearpreasure farpressure   will adjust the pressures for openset optimiation. <0 will specalize, >0 will generalize\n"
@@ -68,7 +70,7 @@ void exit_with_help(){
         "-E  do exaustive search for best openset (otherwise do the default greedy optimization) \n"
 	"-q : quiet mode (no outputs)\n"
     "-o cost : set the parameter C for CAP model in one-vs-rest WSVM \n"
-    "-a gamma : set gamma in kernel function for CAP model in one-vs-rest WSVM \n"        
+    "-a gamma : set gamma in kernel function for CAP model in one-vs-rest WSVM \n"
 	);
 	exit(1);
 }
@@ -81,7 +83,7 @@ void exit_input_error(int line_num){
 void parse_command_line(int argc, char **argv, char *input_file_name, char *model_file_name);
 void read_problem(const char *filename);
 void do_cross_validation(struct svm_problem &prob,const svm_parameter& param);
-void do_cross_validation_wsvm(struct svm_problem &prob,const svm_parameter& param);
+void do_cross_validation_wsvm(struct svm_problem &prob,const svm_parameter& param,struct svm_problem &prob_one_wsvm,const svm_parameter& param_one_wsvm);
 
 
 
@@ -149,6 +151,9 @@ int main(int argc, char **argv){
         param_one_wsvm.cache_size = 100;
         param_one_wsvm.eps = 1e-3;
         param_one_wsvm.do_open = 1;
+        param_one_wsvm.openset_min_probability = param.openset_min_probability_one_wsvm;
+        //param_one_wsvm.openset_min_probability_one_wsvm=;
+        
         sprintf(model_file_name_one_wsvm,"%s_one_wsvm",model_file_name);
         //printf("extended moedel file %s\n",model_file_name_one_wsvm);
 	    read_problem_one_wsvm(input_file_name);
@@ -158,13 +163,16 @@ int main(int argc, char **argv){
               exit(1);
         }
     }
-	if(cross_validation && !open_set){
+	if(param.cross_validation == 1 && !open_set){
         do_cross_validation(prob,param);
     }
+    else if(param.cross_validation == 1 && ( param.svm_type == ONE_WSVM || param.svm_type == PI_SVM) ){
+            do_cross_validation(prob,param);
+        }
 	else{
         if (param.svm_type == ONE_VS_REST_WSVM ){
             if(param.cross_validation == 1){
-                do_cross_validation_wsvm(prob,param);
+                do_cross_validation_wsvm(prob,param,prob_one_wsvm,param_one_wsvm);
 		    }
 		    else{
 		    	model = svm_train(&prob,&param);
@@ -243,16 +251,17 @@ void do_cross_validation(struct svm_problem &prob,const svm_parameter& param){
 	free(target);
 }
 
-void do_cross_validation_wsvm(struct svm_problem &prob,const svm_parameter& param){
+void do_cross_validation_wsvm(struct svm_problem &prob,const svm_parameter &param,struct svm_problem &prob_one_wsvm,const svm_parameter &param_one_wsvm){
 	int i;
 	int total_correct = 0;
 	double *target = Malloc(double,(ulong) prob.l);
 
-	svm_cross_validation_wsvm(&prob,&param,param.nr_fold,target);
+	svm_cross_validation_wsvm(&prob,&param, &prob_one_wsvm, &param_one_wsvm, param.nr_fold,target);
 
 	for(i=0;i<prob.l;i++)
 		if(target[i] == prob.y[i])
 			++total_correct;
+    printf("Cross Validation Accuracy = %g%%\n",100.0*total_correct/prob.l);
 	free(target);
 
 }
@@ -280,6 +289,9 @@ void parse_command_line(int argc, char **argv, char *input_file_name, char *mode
 	param.weight = NULL;
 	param.cross_validation = 0;
 	param.do_open = 0;
+    param.openset_min_probability = 0.0;
+    param.openset_min_probability_one_wsvm=0.0;
+    
 	// parse options
 	for(i=1;i<argc;i++){
 		if(argv[i][0] != '-') break;
@@ -372,6 +384,12 @@ void parse_command_line(int argc, char **argv, char *input_file_name, char *mode
             case 'a':
 				param.cap_gamma = atof(argv[i]);
 				break;
+            case 'P':
+                param.openset_min_probability = atof(argv[i]);
+                break;
+            case 'C':
+                param.openset_min_probability_one_wsvm = atof(argv[i]);
+                break;
 			default:
 				fprintf(stderr,"Unknown option: -%c\n", argv[i-1][1]);
 				exit_with_help();
